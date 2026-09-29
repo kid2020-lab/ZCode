@@ -131,11 +131,14 @@ internal static class Program
                 ProcessStartInfo startInfo = new ProcessStartInfo
                 {
                     FileName = GetSelfPath(),
-                    Arguments = "--elevated --pipe " + pipeName + " --token " + token +
-                        " --parent-pid " + Process.GetCurrentProcess().Id,
-                    UseShellExecute = true,
+                    UseShellExecute = false,
                     Verb = "runas",
                     WindowStyle = ProcessWindowStyle.Hidden,
+                    Arguments = BuildCommandLine(
+                        "--elevated",
+                        "--pipe", pipeName,
+                        "--token", token,
+                        "--parent-pid", Process.GetCurrentProcess().Id.ToString())
                 };
                 elevated = Process.Start(startInfo);
             }
@@ -359,10 +362,13 @@ internal static class Program
             scm = OpenSCManager(null, null, ScManagerCreateService);
             if (scm == IntPtr.Zero) throw new InvalidOperationException();
 
-            string commandLine = QuoteCommandLineArgument(GetSelfPath()) +
-                " --service --pipe " + pipeName + " --token " + token +
-                " --broker-pid " + brokerPid +
-                " --service-name " + serviceName;
+            string commandLine = BuildCommandLine(
+                QuoteCommandLineArgument(GetSelfPath()),
+                "--service",
+                "--pipe", pipeName,
+                "--token", token,
+                "--broker-pid", brokerPid.ToString(),
+                "--service-name", serviceName);
             service = CreateService(
                 scm,
                 serviceName,
@@ -1241,9 +1247,60 @@ internal static class Program
         return Protocol + "\tERR\t" + code;
     }
 
+    private static string BuildCommandLine(params string[] args)
+    {
+        if (args == null || args.Length == 0) return string.Empty;
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (i > 0) builder.Append(' ');
+            builder.Append(QuoteCommandLineArgument(args[i]));
+        }
+        return builder.ToString();
+    }
+
     private static string QuoteCommandLineArgument(string value)
     {
-        return "\"" + value.Replace("\"", "\\\"") + "\"";
+        if (value == null) return "\"\"";
+        if (value.Length == 0) return "\"\"";
+        bool requiresQuotes = value.IndexOfAny(new[] { ' ', '\t', '\n', '\r', '"', '\\' }) >= 0;
+        if (!requiresQuotes) return value;
+
+        StringBuilder builder = new StringBuilder(value.Length + 2);
+        builder.Append('"');
+        for (int i = 0; i < value.Length; i++)
+        {
+            char ch = value[i];
+            if (ch == '\\')
+            {
+                int backslashes = 1;
+                while (i + 1 < value.Length && value[i + 1] == '\\')
+                {
+                    backslashes++;
+                    i++;
+                }
+
+                if (i + 1 < value.Length && value[i + 1] == '"')
+                {
+                    builder.Append('\\', backslashes * 2);
+                }
+                else
+                {
+                    builder.Append('\\', backslashes);
+                }
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                builder.Append("\\\"");
+                continue;
+            }
+
+            builder.Append(ch);
+        }
+        builder.Append('"');
+        return builder.ToString();
     }
 
     private static bool FixedTimeEquals(string left, string right)
